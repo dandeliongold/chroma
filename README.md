@@ -2,135 +2,180 @@
 
 A Model Context Protocol (MCP) server implementation that provides vector database capabilities through Chroma. This server enables semantic document search, metadata filtering, and document management with persistent storage.
 
-## Requirements
-
-- Python 3.8+
-- Chroma 0.4.0+
-- MCP SDK 0.1.0+
-
-## Components
-
-### Resources
-The server provides document storage and retrieval through Chroma's vector database:
-- Stores documents with content and metadata
-- Persists data in `src/chroma/data` directory
-- Supports semantic similarity search
-
-### Tools
-
-The server implements CRUD operations and search functionality:
-
-#### Document Management
-- `create_document`: Create a new document
-  - Required: `document_id`, `content`
-  - Optional: `metadata` (key-value pairs)
-  - Returns: Success confirmation
-  - Error: Already exists, Invalid input
-
-- `read_document`: Retrieve a document by ID
-  - Required: `document_id`
-  - Returns: Document content and metadata
-  - Error: Not found
-
-- `update_document`: Update an existing document
-  - Required: `document_id`, `content`
-  - Optional: `metadata`
-  - Returns: Success confirmation
-  - Error: Not found, Invalid input
-
-- `delete_document`: Remove a document
-  - Required: `document_id`
-  - Returns: Success confirmation
-  - Error: Not found
-
-- `list_documents`: List all documents
-  - Optional: `limit`, `offset`
-  - Returns: List of documents with content and metadata
-
-#### Search Operations
-- `search_similar`: Find semantically similar documents
-  - Required: `query`
-  - Optional: `num_results`, `metadata_filter`, `content_filter`
-  - Returns: Ranked list of similar documents with distance scores
-  - Error: Invalid filter
-
 ## Features
 
 - **Semantic Search**: Find documents based on meaning using Chroma's embeddings
 - **Metadata Filtering**: Filter search results by metadata fields
 - **Content Filtering**: Additional filtering based on document content
-- **Persistent Storage**: Data persists in local directory between server restarts
+- **File-Based Operations**: Direct creation and updates from file content
+- **Persistent Storage**: Data persists between server restarts
 - **Error Handling**: Comprehensive error handling with clear messages
-- **Retry Logic**: Automatic retries for transient failures
 
-## Installation
+## Tools
 
-1. Install dependencies:
-```bash
-uv venv
-uv sync --dev --all-extras
-```
+### Document Management
 
-## Configuration
+#### File Operations
 
-### Claude Desktop
-
-Add the server configuration to your Claude Desktop config:
-
-Windows: `C:\Users\<username>\AppData\Roaming\Claude\claude_desktop_config.json`
-
-MacOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "chroma": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "C:/MCP/server/community/chroma",
-        "run",
-        "chroma"
-      ]
+- `create_from_file`: Create a new document using content from a local file
+  ```json
+  {
+    "document_id": "string",
+    "file_path": "string (absolute path to the file)",
+    "metadata": {
+      "additional": "properties"
     }
   }
-}
-```
+  ```
 
-### Data Storage
+- `update_from_file`: Update an existing document using content from a local file
+  ```json
+  {
+    "document_id": "string",
+    "file_path": "string (absolute path to the file)",
+    "metadata": {
+      "additional": "properties"
+    }
+  }
+  ```
 
-The server stores data in:
-- Windows: `src/chroma/data`
-- MacOS/Linux: `src/chroma/data`
+#### Direct Operations
 
-## Usage
+- `create_document`: Create a new document with provided content
+  ```json
+  {
+    "document_id": "string",
+    "content": "string",
+    "metadata": {
+      "additional": "properties"
+    }
+  }
+  ```
 
-1. Start the server:
-```bash
-uv run chroma
-```
+- `read_document`: Retrieve a document by ID
+  ```json
+  {
+    "document_id": "string"
+  }
+  ```
 
-2. Use MCP tools to interact with the server:
+- `update_document`: Update an existing document
+  ```json
+  {
+    "document_id": "string",
+    "content": "string",
+    "metadata": {
+      "additional": "properties"
+    }
+  }
+  ```
+
+- `delete_document`: Remove a document
+  ```json
+  {
+    "document_id": "string"
+  }
+  ```
+
+- `list_documents`: List all documents with pagination
+  ```json
+  {
+    "limit": "integer (minimum: 1, default: 10)",
+    "offset": "integer (minimum: 0, default: 0)"
+  }
+  ```
+
+- `get_document_metadata`: Get metadata and chunk information without content
+  ```json
+  {
+    "document_id": "string"
+  }
+  ```
+
+### Search Operations
+
+- `search_similar`: Find semantically similar documents
+  ```json
+  {
+    "query": "string",
+    "num_results": "integer (minimum: 1, default: 5)",
+    "metadata_filter": {
+      "field": "value"
+    },
+    "content_filter": "string"
+  }
+  ```
+
+## Usage Examples
+
+### Creating Documents
 
 ```python
-# Create a document
+# Create from file
+create_from_file({
+    "document_id": "research_paper",
+    "file_path": "/path/to/paper.txt",
+    "metadata": {
+        "author": "John Smith",
+        "year": 2024,
+        "category": "ML"
+    }
+})
+
+# Create directly
 create_document({
     "document_id": "ml_paper1",
     "content": "Convolutional neural networks improve image recognition accuracy.",
     "metadata": {
-        "year": 2020,
+        "year": 2024,
         "field": "computer vision",
         "complexity": "advanced"
     }
 })
+```
 
-# Search similar documents
+### Searching Documents
+
+```python
+# Basic search
 search_similar({
-    "query": "machine learning models",
-    "num_results": 2,
+    "query": "machine learning applications",
+    "num_results": 3
+})
+
+# Search with filters
+search_similar({
+    "query": "neural networks",
+    "num_results": 5,
     "metadata_filter": {
-        "year": 2020,
+        "year": 2024,
         "field": "computer vision"
+    },
+    "content_filter": "accuracy"
+})
+```
+
+### Document Management
+
+```python
+# List documents with pagination
+list_documents({
+    "limit": 10,
+    "offset": 0
+})
+
+# Get document metadata
+get_document_metadata({
+    "document_id": "ml_paper1"
+})
+
+# Update document
+update_document({
+    "document_id": "ml_paper1",
+    "content": "Updated research findings on CNN architectures.",
+    "metadata": {
+        "year": 2024,
+        "status": "revised"
     }
 })
 ```
@@ -138,45 +183,12 @@ search_similar({
 ## Error Handling
 
 The server provides clear error messages for common scenarios:
-- `Document already exists [id=X]`
-- `Document not found [id=X]`
-- `Invalid input: Missing document_id or content`
-- `Invalid filter`
-- `Operation failed: [details]`
-
-## Development
-
-### Testing
-
-1. Run the MCP Inspector for interactive testing:
-```bash
-npx @modelcontextprotocol/inspector uv --directory C:/MCP/server/community/chroma run chroma
-```
-
-2. Use the inspector's web interface to:
-   - Test CRUD operations
-   - Verify search functionality
-   - Check error handling
-   - Monitor server logs
-
-### Building
-
-1. Update dependencies:
-```bash
-uv compile pyproject.toml
-```
-
-2. Build package:
-```bash
-uv build
-```
-
-## Contributing
-
-Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) for details on:
-- Code style
-- Testing requirements
-- Pull request process
+- Document already exists
+- Document not found
+- Invalid input parameters
+- Invalid filter syntax
+- File access errors
+- Operation failures
 
 ## License
 

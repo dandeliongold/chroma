@@ -159,6 +159,13 @@ server.command_options = {
             "content_filter": {"type": "string"}
         },
         "required": ["query"]
+    },
+    "get_document_metadata": {
+        "type": "object",
+        "properties": {
+            "document_id": {"type": "string"}
+        },
+        "required": ["document_id"]
     }
 }
 
@@ -276,6 +283,17 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["query"]
             }
+        ),
+        types.Tool(
+            name="get_document_metadata",
+            description="Get metadata and chunk information for a document without retrieving its content",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "string"}
+                },
+                "required": ["document_id"]
+            }
         )
     ]
 
@@ -304,6 +322,8 @@ async def handle_call_tool(
             return await handlers.handle_list_documents(arguments)
         elif name == "search_similar":
             return await handlers.handle_search_similar(arguments)
+        elif name == "get_document_metadata":
+            return await handlers.handle_get_document_metadata(arguments)
         
         raise ValueError(f"Unknown tool: {name}")
 
