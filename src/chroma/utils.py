@@ -27,31 +27,48 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 100) -> list[st
     start = 0
     text_len = len(text)
 
+    # Special case for small text
+    if len(text) <= chunk_size:
+        return [text.strip()] if text.strip() else []
+
+    def find_best_sentence_boundary(target_pos: int) -> int:
+        """Find the best sentence boundary near the target position.
+        First looks backwards from target, then forwards if no boundary found."""
+        
+        # First look backwards from target
+        for i in range(target_pos, max(start - 1, -1), -1):
+            if text[i] in '.!?' and (i + 1 >= text_len or text[i + 1].isspace()):
+                return i + 1
+                
+        # If no boundary found before, look forward
+        search_end = min(target_pos + 50, text_len)
+        for i in range(target_pos, search_end):
+            if text[i] in '.!?' and (i + 1 >= text_len or text[i + 1].isspace()):
+                return i + 1
+                
+        # If no boundary found in either direction, use target
+        return target_pos
+
     while start < text_len:
-        # Calculate end position
-        end = start + chunk_size
-        if end > text_len:
+        # Calculate target end position
+        target_end = min(start + chunk_size, text_len)
+        
+        # Find best sentence boundary
+        if target_end >= text_len:
             end = text_len
+        else:
+            end = find_best_sentence_boundary(target_end)
             
-        # Find nearest sentence boundary after target end
-        # Look for ., !, ? followed by space or newline
-        if end < text_len:
-            for i in range(end + 50):  # Look ahead up to 50 chars
-                if i >= text_len:
-                    break
-                if text[i] in '.!?' and (i + 1 >= text_len or text[i + 1].isspace()):
-                    end = i + 1
-                    break
-                    
         # Extract chunk
         chunk = text[start:end].strip()
-        if chunk:  # Only add non-empty chunks
+        if chunk:
             chunks.append(chunk)
             
-        # Move start position accounting for overlap
-        start = end - overlap
-        if start < 0:
-            start = 0
+        if end >= text_len:
+            break
+            
+        # Move to next position with overlap
+        start = max(start + 1, end - overlap)
             
     return chunks
 
