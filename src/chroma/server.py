@@ -28,13 +28,6 @@ client = chromadb.Client(Settings(
     is_persistent=True
 ))
 
-try:
-    collection = client.get_collection("documents")
-    logger.info("Retrieved existing collection 'documents'")
-except Exception:
-    collection = client.create_collection("documents")
-    logger.info("Created new collection 'documents'")
-
 # Use sentence transformers for better embeddings
 model_name = "all-MiniLM-L6-v2"
 logger.info(f"Initializing embedding function with model: {model_name}")
@@ -48,29 +41,52 @@ except Exception as e:
     logger.error(f"Failed to initialize embedding function: {str(e)}")
     raise
 
+# Initialize collection with embedding function
+try:
+    collection = client.get_collection(
+        name="documents",
+        embedding_function=embedding_function
+    )
+    logger.info("Retrieved existing collection 'documents'")
+except Exception:
+    collection = client.create_collection(
+        name="documents",
+        embedding_function=embedding_function
+    )
+    logger.info("Created new collection 'documents'")
+
+# Ensure embedding function is set
+collection._embedding_function = embedding_function
+
 # Add a sample document if collection is empty
 try:
-    if collection.count() == 0:
-        logger.info("Adding sample document to empty collection")
-        collection.add(
-            documents=[
-                "Vector databases are specialized databases designed to store and retrieve high-dimensional vectors efficiently. "
-                "In machine learning, they are crucial for similarity search, recommendation systems, and semantic search applications. "
-                "They use techniques like LSH or HNSW for fast approximate nearest neighbor search."
-            ],
-            ids=["sample_doc"],
-            metadatas=[{
-                "topic": "vector databases",
-                "type": "sample",
-                "date": "2024-12-31"
-            }]
-        )
-        logger.info("Sample document added successfully")
+    # Check if collection is empty using peek()
+    try:
+        existing_docs = collection.peek(limit=1)
+        if not existing_docs or not existing_docs.get('documents'):
+            logger.info("Adding sample document to empty collection")
+            collection.add(
+                documents=[
+                    "Vector databases are specialized databases designed to store and retrieve high-dimensional vectors efficiently. "
+                    "In machine learning, they are crucial for similarity search, recommendation systems, and semantic search applications. "
+                    "They use techniques like LSH or HNSW for fast approximate nearest neighbor search."
+                ],
+                ids=["sample_doc"],
+                metadatas=[{
+                    "topic": "vector databases",
+                    "type": "sample",
+                    "date": "2024-12-31",
+                    "doc_id": "sample_doc"  # Add doc_id to metadata
+                }]
+            )
+            logger.info("Sample document added successfully")
+    except Exception as e:
+        logger.error(f"Error checking collection: {str(e)}")
 except Exception as e:
     logger.error(f"Error adding sample document: {e}")
 
-# Initialize handlers with collection
-handlers = DocumentHandlers(collection)
+# Initialize handlers with collection and embedding function
+handlers = DocumentHandlers(collection, embedding_function)
 
 # Create server instance
 server = Server("chroma")

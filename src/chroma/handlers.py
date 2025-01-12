@@ -76,8 +76,9 @@ def read_file_content(file_path: str) -> str:
 class DocumentHandlers:
     """Handlers for document operations."""
     
-    def __init__(self, collection):
+    def __init__(self, collection, embedding_function):
         self.collection = collection
+        self.embedding_function = embedding_function
 
     @retry_operation("create_document")
     async def handle_create_document(self, arguments: dict) -> List[types.TextContent]:
@@ -90,13 +91,13 @@ class DocumentHandlers:
             raise DocumentOperationError("Missing document_id or content")
 
         try:
-            # Check if document exists
+            # Check if document exists using peek()
             try:
                 existing = self.collection.get(
                     ids=[doc_id],
-                    include=['metadatas']
+                    include=['documents']
                 )
-                if existing and existing['ids']:
+                if existing and existing.get('documents'):
                     raise DocumentOperationError(f"Document already exists [id={doc_id}]")
             except Exception as e:
                 if "not found" not in str(e).lower():
@@ -167,7 +168,8 @@ class DocumentHandlers:
             original_metadata.update({
                 "chunk_ids": chunk_ids,
                 "total_chunks": str(total_chunks),
-                "chunk_type": "original"  # Use consistent field name
+                "chunk_type": "original",  # Use consistent field name
+                "doc_id": doc_id  # Store document ID in metadata
             })
 
             self.collection.add(
@@ -200,9 +202,11 @@ class DocumentHandlers:
         logger.info(f"Reading document with ID: {doc_id}")
 
         try:
-            result = self.collection.get(ids=[doc_id])
-            
-            if not result or not result.get('ids') or len(result['ids']) == 0:
+            result = self.collection.get(
+                ids=[doc_id],
+                include=['documents', 'metadatas']
+            )
+            if not result or not result.get('documents'):
                 raise DocumentOperationError(f"Document not found [id={doc_id}]")
 
             logger.info(f"Successfully retrieved document: {doc_id}")
@@ -241,8 +245,11 @@ class DocumentHandlers:
         
         try:
             # Check if document exists and get its metadata
-            existing = self.collection.get(ids=[doc_id])
-            if not existing or not existing.get('ids'):
+            existing = self.collection.get(
+                ids=[doc_id],
+                include=['documents', 'metadatas']
+            )
+            if not existing or not existing.get('documents'):
                 raise DocumentOperationError(f"Document not found [id={doc_id}]")
                 
             existing_metadata = existing['metadatas'][0] if existing.get('metadatas') else {}
@@ -296,7 +303,8 @@ class DocumentHandlers:
             original_metadata.update({
                 "chunk_ids": chunk_ids,
                 "total_chunks": str(total_chunks),
-                "chunk_type": "original"
+                "chunk_type": "original",
+                "doc_id": doc_id  # Store document ID in metadata
             })
 
             self.collection.update(
@@ -331,13 +339,13 @@ class DocumentHandlers:
             logger.info(f"Verifying document existence: {doc_id}")
             existing = self.collection.get(
                 ids=[doc_id],
-                include=['metadatas']
+                include=['metadatas', 'documents']
             )
-            if not existing or not existing.get('ids') or len(existing['ids']) == 0:
+            if not existing or not existing.get('metadatas'):
                 raise DocumentOperationError(f"Document not found [id={doc_id}]")
-                
+            
             # Get metadata to check for chunks
-            metadata = existing['metadatas'][0] if existing.get('metadatas') else {}
+            metadata = existing['metadatas'][0]
             chunk_ids = metadata.get('chunk_ids', [])
             
             logger.info(f"Document found, proceeding with deletion: {doc_id}")
@@ -362,30 +370,14 @@ class DocumentHandlers:
                 logger.info(f"Delete attempt {current_attempt + 1}/{max_attempts} for document: {doc_id}")
                 self.collection.delete(ids=[doc_id])
                 
-                # Verify deletion was successful
-                try:
-                    check = self.collection.get(ids=[doc_id])
-                    if not check or not check.get('ids') or len(check['ids']) == 0:
-                        logger.info(f"Successfully deleted document and its chunks: {doc_id}")
-                        return [
-                            types.TextContent(
-                                type="text",
-                                text=f"Deleted document '{doc_id}' and its chunks successfully"
-                            )
-                        ]
-                    else:
-                        raise Exception("Document still exists after deletion")
-                except Exception as e:
-                    if "not found" in str(e).lower():
-                        # This is good - means deletion was successful
-                        logger.info(f"Successfully deleted document and its chunks: {doc_id}")
-                        return [
-                            types.TextContent(
-                                type="text",
-                                text=f"Deleted document '{doc_id}' and its chunks successfully"
-                            )
-                        ]
-                    raise
+                # Document deletion was successful
+                logger.info(f"Successfully deleted document and its chunks: {doc_id}")
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"Deleted document '{doc_id}' and its chunks successfully"
+                    )
+                ]
 
             except Exception as e:
                 current_attempt += 1
@@ -414,14 +406,9 @@ class DocumentHandlers:
         offset = arguments.get("offset", 0)
 
         try:
-            # Get all documents
-            results = self.collection.get(
-                limit=limit,
-                offset=offset,
-                include=['documents', 'metadatas']
-            )
-
-            if not results or not results.get('ids'):
+            # Get all document IDs
+            all_ids = self.collection.get()['ids'] if self.collection.count() > 0 else []
+            if not all_ids:
                 return [
                     types.TextContent(
                         type="text",
@@ -429,15 +416,40 @@ class DocumentHandlers:
                     )
                 ]
 
+            # Get documents in batches
+            start = offset
+            end = min(start + limit, len(all_ids))
+            batch_ids = all_ids[start:end]
+            
+            if not batch_ids:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text="No documents found in collection"
+                    )
+                ]
+
+            results = self.collection.get(
+                ids=batch_ids,
+                include=['documents', 'metadatas']
+            )
+
             # Format results
-            response = [f"Documents (showing {len(results['ids'])} results):"]
-            for i, (doc_id, content, metadata) in enumerate(
-                zip(results['ids'], results['documents'], results['metadatas'])
-            ):
-                response.append(f"\nID: {doc_id}")
-                response.append(f"Content: {content}")
-                if metadata:
-                    response.append(f"Metadata: {metadata}")
+            response = [f"Documents (showing {len(batch_ids)} results):"]
+            for i, doc_id in enumerate(batch_ids):
+                content = results['documents'][i]
+                metadata = results['metadatas'][i]
+                
+                response.append(f"\nDocument ID: {doc_id}")
+                response.append(f"Content: {content[:100]}...")  # Show first 100 chars
+                
+                # Filter out internal metadata
+                display_metadata = {
+                    k: v for k, v in metadata.items()
+                    if k not in ['chunk_ids', 'total_chunks', 'chunk_type', 'doc_id']
+                }
+                if display_metadata:
+                    response.append(f"Metadata: {display_metadata}")
 
             return [
                 types.TextContent(
@@ -468,15 +480,14 @@ class DocumentHandlers:
                 "include": ['documents', 'metadatas', 'distances']
             }
 
-            # Build where clause as a list of conditions
-            where_conditions = [{"$and": []}]
-            where_conditions[0]["$and"].append({"chunk_type": {"$eq": "chunk"}})
+            # Build where clause
+            where_clause = {"chunk_type": "chunk"}  # Simple equality check
             
             # Add metadata filters if present
             if metadata_filter:
                 for key, value in metadata_filter.items():
                     if isinstance(value, (int, float)):
-                        where_conditions[0]["$and"].append({key: {"$eq": str(value)}})
+                        where_clause[key] = str(value)
                     elif isinstance(value, dict):
                         # Handle operator conditions
                         processed_value = {}
@@ -485,11 +496,11 @@ class DocumentHandlers:
                                 processed_value[op] = [str(v) if isinstance(v, (int, float)) else v for v in val]
                             else:
                                 processed_value[op] = str(val) if isinstance(val, (int, float)) else val
-                        where_conditions[0]["$and"].append({key: processed_value})
+                        where_clause[key] = processed_value
                     else:
-                        where_conditions[0]["$and"].append({key: {"$eq": str(value)}})
+                        where_clause[key] = str(value)
             
-            query_params["where"] = where_conditions[0]
+            query_params["where"] = where_clause
 
             # Add content filter if specified
             if content_filter:
@@ -499,7 +510,7 @@ class DocumentHandlers:
             logger.info(f"Executing search with params: {query_params}")
             results = self.collection.query(**query_params)
 
-            if not results or not results.get('ids') or len(results['ids'][0]) == 0:
+            if not results or not results.get('documents') or len(results['documents'][0]) == 0:
                 msg = ["No documents found matching query: " + query]
                 if metadata_filter:
                     msg.append(f"Metadata filter: {metadata_filter}")
@@ -510,7 +521,7 @@ class DocumentHandlers:
             # Group results by parent document
             grouped_results = {}
             for i, (doc_id, content, metadata, distance) in enumerate(
-                zip(results['ids'][0], results['documents'][0], 
+                zip(results['documents'][0], results['documents'][0], 
                     results['metadatas'][0], results['distances'][0])
             ):
                 parent_id = metadata.get('parent_doc_id')
@@ -558,7 +569,7 @@ class DocumentHandlers:
                 # Remove internal chunk tracking from displayed metadata
                 display_metadata = {
                     k: v for k, v in original_metadata.items()
-                    if k not in ['chunk_ids', 'total_chunks', 'is_original']
+                    if k not in ['chunk_ids', 'total_chunks', 'is_original', 'doc_id']
                 }
 
                 response.append(f"\n{i+1}. Document '{doc_id}' (best match distance: {result_data['best_distance']:.4f})")
@@ -599,9 +610,9 @@ class DocumentHandlers:
             try:
                 existing = self.collection.get(
                     ids=[doc_id],
-                    include=['metadatas']
+                    include=['documents', 'metadatas']
                 )
-                if not existing or not existing.get('ids'):
+                if not existing or not existing.get('documents'):
                     raise DocumentOperationError(f"Document not found [id={doc_id}]")
             except Exception as e:
                 if "not found" in str(e).lower():
@@ -614,6 +625,7 @@ class DocumentHandlers:
                     k: str(v) if isinstance(v, (int, float)) else v
                     for k, v in metadata.items()
                 }
+                processed_metadata['doc_id'] = doc_id  # Store document ID in metadata
                 self.collection.update(
                     ids=[doc_id],
                     documents=[content],
@@ -622,7 +634,8 @@ class DocumentHandlers:
             else:
                 self.collection.update(
                     ids=[doc_id],
-                    documents=[content]
+                    documents=[content],
+                    metadatas=[{"doc_id": doc_id}]  # Store document ID in metadata
                 )
 
             return [
@@ -653,9 +666,9 @@ class DocumentHandlers:
             try:
                 existing = self.collection.get(
                     ids=[doc_id],
-                    include=['metadatas']
+                    include=['documents']
                 )
-                if existing and existing['ids']:
+                if existing and existing.get('documents'):
                     raise DocumentOperationError(f"Document already exists [id={doc_id}]")
             except Exception as e:
                 if "not found" not in str(e).lower():
@@ -667,8 +680,9 @@ class DocumentHandlers:
                     k: str(v) if isinstance(v, (int, float)) else v
                     for k, v in metadata.items()
                 }
+                processed_metadata['doc_id'] = doc_id  # Store document ID in metadata
             else:
-                processed_metadata = {}
+                processed_metadata = {"doc_id": doc_id}  # Store document ID in metadata
 
             # Add document
             self.collection.add(
