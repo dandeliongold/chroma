@@ -78,7 +78,7 @@ def generate_chunk_metadata(
         - parent_doc_id
         - chunk_index 
         - total_chunks
-        - is_chunk: true
+        - chunk_type: chunk
     """
     # Create copy of original metadata
     metadata = original_metadata.copy() if original_metadata else {}
@@ -86,9 +86,9 @@ def generate_chunk_metadata(
     # Add chunk-specific fields
     metadata.update({
         "parent_doc_id": doc_id,
-        "chunk_index": chunk_index,
-        "total_chunks": total_chunks,
-        "is_chunk": True
+        "chunk_index": str(chunk_index),
+        "total_chunks": str(total_chunks),
+        "chunk_type": "chunk"  # Use this for filtering instead of boolean
     })
     
     return metadata
