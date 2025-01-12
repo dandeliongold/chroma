@@ -3,6 +3,7 @@
 import asyncio
 import os
 import logging
+import sys
 from typing import Any, Optional
 import chromadb
 from chromadb.utils import embedding_functions
@@ -337,16 +338,32 @@ async def handle_call_tool(
 
 async def main():
     """Run the MCP server."""
+    # Configure UTF-8 for stdin/stdout on Windows
+    if sys.platform == 'win32':
+        import msvcrt
+        import _locale
+        _locale._getdefaultlocale = (lambda *args: ['en_US', 'utf-8'])
+        import codecs
+        if hasattr(sys.stdout, 'buffer'):
+            sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+        if hasattr(sys.stderr, 'buffer'):
+            sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+
+    # Use standard stdio transport
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="chroma",
-                server_version="0.1.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
+        try:
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="chroma",
+                    server_version="0.1.0",
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(),
+                        experimental_capabilities={},
+                    ),
                 ),
-            ),
-        )
+            )
+        except Exception as e:
+            logger.error(f"Server error: {str(e)}", exc_info=True)
+            raise
