@@ -14,6 +14,7 @@ from mcp.server import NotificationOptions, Server
 from pydantic import AnyUrl
 import mcp.server.stdio
 import functools
+from .utils import chunk_text, generate_chunk_metadata
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -137,6 +138,24 @@ server = Server("chroma")
 
 # Server command options
 server.command_options = {
+    "update_from_file": {
+        "type": "object",
+        "properties": {
+            "document_id": {"type": "string"},
+            "file_path": {"type": "string"},
+            "metadata": {"type": "object", "additionalProperties": True}
+        },
+        "required": ["document_id", "file_path"]
+    },
+    "create_from_file": {
+        "type": "object",
+        "properties": {
+            "document_id": {"type": "string"},
+            "file_path": {"type": "string"},
+            "metadata": {"type": "object", "additionalProperties": True}
+        },
+        "required": ["document_id", "file_path"]
+    },
     "create_document": {
         "type": "object",
         "properties": {
@@ -234,10 +253,56 @@ def build_where_clause(metadata: dict) -> dict:
     
     return {"$and": conditions}
 
+def read_file_content(file_path: str) -> str:
+    """Read content from a file safely."""
+    if not os.path.isabs(file_path):
+        raise DocumentOperationError("File path must be absolute")
+    
+    if not os.path.exists(file_path):
+        raise DocumentOperationError(f"File not found: {file_path}")
+        
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        raise DocumentOperationError(f"Error reading file: {str(e)}")
+
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     """List available tools for document operations."""
     return [
+        types.Tool(
+            name="update_from_file",
+            description="Update an existing document in Chroma using content from a local file",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "string"},
+                    "file_path": {"type": "string", "description": "Absolute path to the file"},
+                    "metadata": {
+                        "type": "object",
+                        "additionalProperties": True
+                    }
+                },
+                "required": ["document_id", "file_path"]
+            }
+        ),
+        types.Tool(
+            name="create_from_file",
+            description="Create a new document in Chroma using content from a local file",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "string"},
+                    "file_path": {"type": "string", "description": "Absolute path to the file"},
+                    "metadata": {
+                        "type": "object",
+                        "additionalProperties": True
+                    }
+                },
+                "required": ["document_id", "file_path"]
+            }
+        ),
         types.Tool(
             name="create_document",
             description="Create a new document in the Chroma vector database",
@@ -328,7 +393,11 @@ async def handle_call_tool(
         arguments = {}
 
     try:
-        if name == "create_document":
+        if name == "update_from_file":
+            return await handle_update_from_file(arguments)
+        elif name == "create_from_file":
+            return await handle_create_from_file(arguments)
+        elif name == "create_document":
             return await handle_create_document(arguments)
         elif name == "read_document":
             return await handle_read_document(arguments)
@@ -344,6 +413,128 @@ async def handle_call_tool(
         raise ValueError(f"Unknown tool: {name}")
 
     except DocumentOperationError as e:
+        return [
+            types.TextContent(
+                type="text",
+                text=f"{e.error}"
+            )
+        ]
+    except Exception as e:
+        return [
+            types.TextContent(
+                type="text",
+                text=f"Error: {str(e)}"
+            )
+        ]
+
+@retry_operation("create_from_file")
+@retry_operation("update_from_file")
+async def handle_update_from_file(arguments: dict) -> list[types.TextContent]:
+    """Handle document update from file with retry logic"""
+    doc_id = arguments.get("document_id")
+    file_path = arguments.get("file_path")
+    metadata = arguments.get("metadata")
+
+    if not doc_id or not file_path:
+        raise DocumentOperationError("Missing document_id or file_path")
+
+    try:
+        # Read content from file
+        content = read_file_content(file_path)
+
+        # Check if document exists
+        try:
+            existing = collection.get(
+                ids=[doc_id],
+                include=['metadatas']
+            )
+            if not existing or not existing.get('ids'):
+                raise DocumentOperationError(f"Document not found [id={doc_id}]")
+        except Exception as e:
+            if "not found" in str(e).lower():
+                raise DocumentOperationError(f"Document not found [id={doc_id}]")
+            raise
+
+        # Process metadata
+        if metadata:
+            processed_metadata = {
+                k: str(v) if isinstance(v, (int, float)) else v
+                for k, v in metadata.items()
+            }
+            collection.update(
+                ids=[doc_id],
+                documents=[content],
+                metadatas=[processed_metadata]
+            )
+        else:
+            collection.update(
+                ids=[doc_id],
+                documents=[content]
+            )
+
+        return [
+            types.TextContent(
+                type="text",
+                text=f"Updated document '{doc_id}' from file '{file_path}' successfully"
+            )
+        ]
+    except DocumentOperationError:
+        raise
+    except Exception as e:
+        raise DocumentOperationError(str(e))
+
+async def handle_create_from_file(arguments: dict) -> list[types.TextContent]:
+    """Handle document creation from file with retry logic"""
+    doc_id = arguments.get("document_id")
+    file_path = arguments.get("file_path")
+    metadata = arguments.get("metadata")
+
+    if not doc_id or not file_path:
+        raise DocumentOperationError("Missing document_id or file_path")
+
+    try:
+        # Read content from file
+        content = read_file_content(file_path)
+
+        # Check if document exists
+        try:
+            existing = collection.get(
+                ids=[doc_id],
+                include=['metadatas']
+            )
+            if existing and existing['ids']:
+                raise DocumentOperationError(f"Document already exists [id={doc_id}]")
+        except Exception as e:
+            if "not found" not in str(e).lower():
+                raise
+
+        # Process metadata
+        if metadata:
+            processed_metadata = {
+                k: str(v) if isinstance(v, (int, float)) else v
+                for k, v in metadata.items()
+            }
+        else:
+            processed_metadata = {}
+
+        # Add document
+        collection.add(
+            documents=[content],
+            ids=[doc_id],
+            metadatas=[processed_metadata]
+        )
+
+        return [
+            types.TextContent(
+                type="text",
+                text=f"Created document '{doc_id}' from file '{file_path}' successfully"
+            )
+        ]
+    except DocumentOperationError:
+        raise
+    except Exception as e:
+        raise DocumentOperationError(str(e))
+
         return [
             types.TextContent(
                 type="text",
