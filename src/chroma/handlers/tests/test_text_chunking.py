@@ -1,6 +1,6 @@
 """Unit tests for utility functions."""
 import pytest
-from .utils import chunk_text, generate_chunk_metadata
+from ...text_chunking import chunk_text, generate_chunk_metadata
 
 def test_chunk_text_empty():
     """Test chunking empty text returns empty list."""

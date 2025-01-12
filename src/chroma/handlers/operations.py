@@ -5,7 +5,7 @@ from typing import List, Any
 
 import mcp.types as types
 from ..types import DocumentOperationError
-from ..utils import chunk_text, generate_chunk_metadata
+from ..text_chunking import chunk_text, generate_chunk_metadata
 
 # Set up logging
 logger = logging.getLogger(__name__)
