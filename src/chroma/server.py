@@ -59,33 +59,6 @@ except Exception:
 # Ensure embedding function is set
 collection._embedding_function = embedding_function
 
-# Add a sample document if collection is empty
-try:
-    # Check if collection is empty using peek()
-    try:
-        existing_docs = collection.peek(limit=1)
-        if not existing_docs or not existing_docs.get('documents'):
-            logger.info("Adding sample document to empty collection")
-            collection.add(
-                documents=[
-                    "Vector databases are specialized databases designed to store and retrieve high-dimensional vectors efficiently. "
-                    "In machine learning, they are crucial for similarity search, recommendation systems, and semantic search applications. "
-                    "They use techniques like LSH or HNSW for fast approximate nearest neighbor search."
-                ],
-                ids=["sample_doc"],
-                metadatas=[{
-                    "topic": "vector databases",
-                    "type": "sample",
-                    "date": "2024-12-31",
-                    "doc_id": "sample_doc"  # Add doc_id to metadata
-                }]
-            )
-            logger.info("Sample document added successfully")
-    except Exception as e:
-        logger.error(f"Error checking collection: {str(e)}")
-except Exception as e:
-    logger.error(f"Error adding sample document: {e}")
-
 # Initialize handlers with collection and embedding function
 handlers = DocumentHandlers(collection, embedding_function)
 
